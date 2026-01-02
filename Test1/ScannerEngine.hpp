@@ -117,7 +117,7 @@ public:
 			// 过滤plt段
 			qstring seg_name;
 			get_segm_name(&seg_name, getseg(pFunc->start_ea));
-			if (seg_name == ".plt" || seg_name == ".plt.got")
+			if (seg_name == ".plt" || seg_name == ".plt.got" || seg_name == ".plt.sec")
 			{
 				continue;
 			}
@@ -149,7 +149,7 @@ public:
 
 			if (elapsed_ms > 100)
 			{
-				show_wait_box("Scanning function %zu/%zu: %p", i + 1, func_count, pFunc->start_ea);
+				msg("Scanning function %zu/%zu: %p", i + 1, func_count, pFunc->start_ea);
 				last_update_time = current_time;
 			}
 
@@ -175,10 +175,11 @@ public:
 			}
 		}
 
-		hide_wait_box();
-		// 这里本来是存在一个bug的，导致调用一次hide关不掉，但是再调一次就能关掉（玄学修复）
+
 		hide_wait_box();
 		msg("Scan finished. Found %zu entries.\n", out_result.size());
+		qsleep(100);
+
 	}
 
 };

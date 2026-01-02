@@ -168,16 +168,29 @@ private:
         uint64_t dest_size = GetStackBufferSize(dest);
         cexpr_t* real_src = SkipCasts(src);
 
-        if (dest_size > 0 && real_src->op == cot_str)
+        if (dest_size > 0)
         {
-            qstring content;
-            if (real_src->string) content = real_src->string;
-            if (content.length() >= dest_size)
+			// src 为字符串常量
+            if (real_src->op == cot_str)
+	        {
+		        qstring content;
+	        	if (real_src->string) content = real_src->string;
+	        	if (content.length() >= dest_size)
+	        	{
+                    LOG_DEBUG("  [CheckRead] !!! OVERFLOW DETECTED !!!\n");
+	        		qstring msg;
+	        		msg.cat_sprnt("Strcpy Overflow: len %d >= buf %lld", content.length(), dest_size);
+	        		m_results->emplace_back(call->ea, "Stack Overflow(Critical)", msg.c_str(), RiskLevel::CRITICAL);
+	        	}
+	        }
+            // src 为变量或复杂表达式，无法确定大小
+            else
             {
+                LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
                 qstring msg;
-                msg.cat_sprnt("Strcpy Overflow: len %d >= buf %lld", content.length(), dest_size);
-                m_results->emplace_back(call->ea, "Stack Overflow(Critical)", msg.c_str(), RiskLevel::CRITICAL);
-            }
+                msg.cat_sprnt("Risky Strcpy: Unknown source len into fixed buf (%lld)", dest_size);
+                m_results->emplace_back(call->ea, "Potential Stack Overflow", msg.c_str(), RiskLevel::HIGH);
+			}
         }
     }
 
@@ -191,13 +204,26 @@ private:
         uint64_t dest_size = GetStackBufferSize(dest);
         cexpr_t* real_len = SkipCasts(len);
 
-        if (dest_size > 0 && real_len->op == cot_num)
+        if (dest_size > 0)
         {
-            if (real_len->n->_value > dest_size)
+			// len 为立即数
+            if (real_len->op == cot_num)
+	        {
+		        if (real_len->n->_value > dest_size)
+		        {
+                    LOG_DEBUG("  [CheckRead] !!! OVERFLOW DETECTED !!!\n");
+		        	qstring msg;
+		        	msg.cat_sprnt("Memcpy Overflow: Copy %lld > Dst %lld", real_len->n->_value, dest_size);
+		        	m_results->emplace_back(call->ea, "Stack Overflow", msg.c_str(), RiskLevel::CRITICAL);
+		        }
+	        }
+			// len 为变量或复杂表达式，无法确定大小
+            else
             {
+                LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
                 qstring msg;
-                msg.cat_sprnt("Memcpy Overflow: Copy %lld > Dst %lld", real_len->n->_value, dest_size);
-                m_results->emplace_back(call->ea, "Stack Overflow", msg.c_str(), RiskLevel::CRITICAL);
+                msg.cat_sprnt("Potential Overflow: Memcpy variable size into fixed buf (%lld)", dest_size);
+                m_results->emplace_back(call->ea, "Variable Size Memcpy", msg.c_str(), RiskLevel::HIGH);
             }
         }
     }
@@ -215,15 +241,28 @@ private:
 
         LOG_DEBUG("  [CheckRead] DstSize: %lld, WriteLenOp: %d\n", dest_size, real_len->op);
 
-        if (dest_size > 0 && real_len->op == cot_num)
+        if (dest_size > 0 )
         {
-            if (real_len->n->_value > dest_size)
+            // len 为立即数
+            if (real_len->op == cot_num)
+	        {
+	        	if (real_len->n->_value > dest_size)
+		        {
+	        		LOG_DEBUG("  [CheckRead] !!! OVERFLOW DETECTED !!!\n");
+	        		qstring msg;
+	        		msg.cat_sprnt("Read Overflow: Read %lld > Dst %lld", real_len->n->_value, dest_size);
+	        		m_results->emplace_back(call->ea, "Stack Overflow", msg.c_str(), RiskLevel::CRITICAL);
+		        }
+	        }
+            // len 为变量或复杂表达式，无法确定大小
+            else
             {
-                LOG_DEBUG("  [CheckRead] !!! OVERFLOW DETECTED !!!\n");
+                LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
                 qstring msg;
-                msg.cat_sprnt("Read Overflow: Read %lld > Dst %lld", real_len->n->_value, dest_size);
-                m_results->emplace_back(call->ea, "Stack Overflow", msg.c_str(), RiskLevel::CRITICAL);
-            }
+                msg.cat_sprnt("Potential Overflow: Read variable size into fixed buf (%lld)", dest_size);
+                m_results->emplace_back(call->ea, "Variable Size Read", msg.c_str(), RiskLevel::HIGH);
+			}
+
         }
     }
 };
