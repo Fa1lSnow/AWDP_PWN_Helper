@@ -32,5 +32,8 @@
     <ClInclude Include="StackDetector.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="FormatStringDetector.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

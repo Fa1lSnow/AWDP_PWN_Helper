@@ -13,7 +13,7 @@
 #include "VulnData.hpp"
 #include "IDetector.hpp"
 #include "StackDetector.hpp"
-
+#include "FormatStringDetector.hpp"
 
 //DEMO TEST
 class DemoDetector : public IVulnDetector
@@ -55,6 +55,7 @@ public:
 	{
 		//RegisterDetector(new DemoDetector());
 		RegisterDetector(new StackDetector());
+		RegisterDetector(new FormatStringDetector());
 	}
 
 	~ScannerEngine()

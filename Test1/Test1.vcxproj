@@ -22,6 +22,7 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="FormatStringDetector.hpp" />
     <ClInclude Include="IDetector.hpp" />
     <ClInclude Include="ScannerEngine.hpp" />
     <ClInclude Include="StackDetector.hpp" />
