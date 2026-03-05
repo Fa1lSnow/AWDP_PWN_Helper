@@ -11,17 +11,20 @@
 #include "ScannerEngine.hpp"
 
 /**
- * ¶¨ÒåUI´°¿ÚÀà
+ * ï¿½ï¿½ï¿½ï¿½UIï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
  */
 class VulnChooser : public chooser_t
 {
 public:
-	// Â©¶´Êý¾ÝÁÐ±í
+	static constexpr int kColumnWidths[3] = {15, 20, 60};
+	static constexpr const char* kColumnHeaders[3] = {"Address", "Type", "Description"};
+
+	// Â©ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð±ï¿½
 	VulnList entries;
 
 public:
 	VulnChooser( const char* title)
-		: chooser_t(0, 3, new int[3] {15, 20, 60}, new const char* [3] {"Address", "Type", "Description"}, title)
+		: chooser_t(0, 3, kColumnWidths, kColumnHeaders, title)
 	{
 	}
 
@@ -38,19 +41,19 @@ public:
 		}
 		const VulnEntry& entry = entries[n];
 
-		// µØÖ·ÁÐ
+		// ï¿½ï¿½Ö·ï¿½ï¿½
 		qstring addr_str;
 		addr_str.sprnt("%a", entry.address);
 		cols->at(0) = addr_str;
 
-		// ÀàÐÍÁÐ
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		cols->at(1) = entry.type;
 
-		//ÃèÊöÁÐ
+		//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		cols->at(2) = entry.description;
 
 
-		// ¸ù¾Ý·çÏÕµÈ¼¶ÉèÖÃÍ¼±ê
+		// ï¿½ï¿½ï¿½Ý·ï¿½ï¿½ÕµÈ¼ï¿½ï¿½ï¿½ï¿½ï¿½Í¼ï¿½ï¿½
 		if ( icon_)
 		{
 			if (entry.risk == RiskLevel::HIGH || entry.risk == RiskLevel::CRITICAL)
@@ -69,7 +72,7 @@ public:
 
 	}
 
-	// Ë«»÷Ìø×ª
+	// Ë«ï¿½ï¿½ï¿½ï¿½×ª
 	virtual cbret_t idaapi enter(size_t n) override
 	{
 		if (n < entries.size())
@@ -86,13 +89,12 @@ public:
 	virtual bool idaapi run(size_t arg) override
 	{
 
-		// ÊµÀý»¯ÒýÇæ
+		// Êµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		ScannerEngine engine;
 
-		// ±ØÐë new Ò»¸ö¶ÔÏó£¬·ñÔò run ½áÊøÖ®ºó chooser »á±»Îö¹¹
 		VulnChooser* chooser = new VulnChooser("Vuln Results");
 
-		// Ö´ÐÐÉ¨Ãè
+		// Ö´ï¿½ï¿½É¨ï¿½ï¿½
 		engine.ScanAll(chooser->entries);
 
 		if (chooser->entries.empty())
@@ -113,11 +115,17 @@ public:
 
 plugmod_t* idaapi init()
 {
+	if (!init_hexrays_plugin())
+	{
+		warning("Hex-Rays decompiler is required. Plugin will not be loaded.\n");
+		return nullptr;
+	}
+
 	msg("VulnScanner UI plugin initialized.\n");
 	return new test_plugin_t;
 }
 
-// ²å¼þÐÅÏ¢
+// ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢
 plugin_t PLUGIN =
 {
 	IDP_INTERFACE_VERSION,

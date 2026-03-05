@@ -8,6 +8,8 @@
 #include <hexrays.hpp>
 #include <segment.hpp>
 #include <chrono>
+#include <exception>
+#include <memory>
 
 #include <vector>
 #include "VulnData.hpp"
@@ -26,11 +28,11 @@ public:
 
 	virtual void RunAnalysis(cfunc_t* cfunc, VulnList& result) override
 	{
-		// »ñÈ¡º¯ÊýÃû³Æ
+		// ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		qstring func_name;
 		get_func_name(&func_name, cfunc->entry_ea);
 
-		// ¼òµ¥Ê¾Àý£ºÈç¹ûº¯ÊýÃû°üº¬ "main"£¬Ôò±¨¸æÒ»¸ö¼ÙÉèµÄÂ©¶´
+		// ï¿½ï¿½Ê¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ "main"ï¿½ï¿½ï¿½ò±¨¸ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â©ï¿½ï¿½
 		if (func_name.find("main") != qstring::npos)
 		{
 			result.push_back(VulnEntry(
@@ -43,44 +45,36 @@ public:
 	}
 };
 
-// É¨ÃèÒýÇæÀà
+// É¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 class ScannerEngine
 {
 private:
-	// Ì½²âÆ÷ÁÐ±í
-	std::vector<IVulnDetector*> detectors;
+	// Ì½ï¿½ï¿½ï¿½ï¿½ï¿½Ð±ï¿½
+	std::vector<std::unique_ptr<IVulnDetector>> detectors;
 
 public:
 	ScannerEngine()
 	{
-		//RegisterDetector(new DemoDetector());
-		RegisterDetector(new StackDetector());
-		RegisterDetector(new FormatStringDetector());
+		RegisterDetector(std::make_unique<StackDetector>());
+		RegisterDetector(std::make_unique<FormatStringDetector>());
 	}
 
-	~ScannerEngine()
-	{
-		for (auto *d : detectors)
-		{
-			delete d;
-		}
-		detectors.clear();
-	}
+	~ScannerEngine() = default;
 
 	/**
-	 * ×¢²áÒ»¸öÐÂµÄÂ©É¨
+	 * ×¢ï¿½ï¿½Ò»ï¿½ï¿½ï¿½Âµï¿½Â©É¨
 	 */
-	void RegisterDetector(IVulnDetector* detector)
+	void RegisterDetector(std::unique_ptr<IVulnDetector> detector)
 	{
 		if (detector)
 		{
-			detectors.push_back(detector);
+			detectors.push_back(std::move(detector));
 		}
 	}
 
 	void ScanAll(VulnList& out_result)
 	{
-		// ¼ì²é²¢³õÊ¼»¯ Hex-Rays ²å¼þ
+		// ï¿½ï¿½é²¢ï¿½ï¿½Ê¼ï¿½ï¿½ Hex-Rays ï¿½ï¿½ï¿½
 		if (!init_hexrays_plugin())
 		{
 			msg("Hex-Rays decompiler is not available.\n");
@@ -94,11 +88,11 @@ public:
 
 		show_wait_box("Starting scan...");
 
-		// ¼ÆÊ±Æ÷ÓÃÓÚ¿ØÖÆË¢ÐÂ¼ä¸ô
+		// ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½Ú¿ï¿½ï¿½ï¿½Ë¢ï¿½Â¼ï¿½ï¿½
 		auto last_update_time = std::chrono::steady_clock::now();
 
 
-		// ±éÀúËùÓÐº¯Êý
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ðºï¿½ï¿½ï¿½
 		for (size_t i = 0; i < func_count; i ++)
 		{
 
@@ -108,14 +102,14 @@ public:
 				break;
 			}
 
-			// »ñÈ¡º¯Êý¾ä±ú
+			// ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 			func_t* pFunc = getn_func(i);
 			if (!pFunc)
 			{
 				continue;
 			}
 
-			// ¹ýÂËplt¶Î
+			// ï¿½ï¿½ï¿½ï¿½pltï¿½ï¿½
 			qstring seg_name;
 			get_segm_name(&seg_name, getseg(pFunc->start_ea));
 			if (seg_name == ".plt" || seg_name == ".plt.got" || seg_name == ".plt.sec")
@@ -123,13 +117,13 @@ public:
 				continue;
 			}
 
-			// ¹ýÂË PLT¡¢¿âº¯Êý¡¢Thunk º¯Êý¡¢Òþ²Øº¯Êý
+			// ï¿½ï¿½ï¿½ï¿½ PLTï¿½ï¿½ï¿½âº¯ï¿½ï¿½ï¿½ï¿½Thunk ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Øºï¿½ï¿½ï¿½
 			if (pFunc->flags & (FUNC_LIB | FUNC_THUNK | FUNC_HIDDEN))
 			{
 				continue;
 			}
 
-			// ¹ýÂË extern ºÍ data ¶Î
+			// ï¿½ï¿½ï¿½ï¿½ extern ï¿½ï¿½ data ï¿½ï¿½
 			segment_t* seg = getseg(pFunc->start_ea);
 			if (seg)
 			{
@@ -144,35 +138,38 @@ public:
 				continue;
 			}
 
-			// 100 ms Ë¢ÐÂÒ»´ÎUI
+			// 100 ms Ë¢ï¿½ï¿½Ò»ï¿½ï¿½UI
 			auto current_time = std::chrono::steady_clock::now();
 			auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_time).count();
 
 			if (elapsed_ms > 100)
 			{
-				msg("Scanning function %zu/%zu: %p", i + 1, func_count, pFunc->start_ea);
+				msg("Scanning function %zu/%zu: %a\n", i + 1, func_count, pFunc->start_ea);
 				last_update_time = current_time;
 			}
 
+			hexrays_failure_t hf;
+			cfuncptr_t cfunc = decompile_func(pFunc, &hf, DECOMP_WARNINGS);
 
-			try
+			if ( cfunc == nullptr)
 			{
-				hexrays_failure_t hf;
-				cfuncptr_t cfunc = decompile_func(pFunc, &hf, DECOMP_WARNINGS);
+				continue;
+			}
 
-				if ( cfunc == nullptr)
-				{
-					continue;
-				}
-
-				for (auto* detector : detectors)
+			for (const auto& detector : detectors)
+			{
+				try
 				{
 					detector->RunAnalysis(cfunc, out_result);
 				}
-			}
-			catch (...)
-			{
-				continue;
+				catch (const std::exception& e)
+				{
+					msg("Detector '%s' failed at %a: %s\n", detector->getName(), pFunc->start_ea, e.what());
+				}
+				catch (...)
+				{
+					msg("Detector '%s' failed at %a: unknown exception\n", detector->getName(), pFunc->start_ea);
+				}
 			}
 		}
 

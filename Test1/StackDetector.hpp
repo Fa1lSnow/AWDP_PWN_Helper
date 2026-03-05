@@ -24,7 +24,7 @@ private:
 public:
     StackDetector() : ctree_visitor_t(CV_FAST)
     {
-        // ×¢²á»Øµ÷
+        // ×¢ï¿½ï¿½Øµï¿½
         auto check_gets = [this](cexpr_t* e) { CheckGets(e); };
         m_dispatch_map["gets"] = check_gets;
         m_dispatch_map["_gets"] = check_gets;
@@ -53,17 +53,22 @@ public:
 
     virtual void RunAnalysis(cfunc_t* cfunc, VulnList& result) override
     {
+        if (cfunc == nullptr)
+        {
+            return;
+        }
+
         m_results = &result;
         m_cfunc = cfunc;
         this->apply_to(&cfunc->body, nullptr);
     }
 
 protected:
-    // °þÀë cast ÀàÐÍ×ª»»£¬ÕÒµ½ºËÐÄ½Úµã
+    // ï¿½ï¿½ï¿½ï¿½ cast ï¿½ï¿½ï¿½ï¿½×ªï¿½ï¿½ï¿½ï¿½ï¿½Òµï¿½ï¿½ï¿½ï¿½Ä½Úµï¿½
     cexpr_t* SkipCasts(cexpr_t* expr)
     {
         cexpr_t* cur = expr;
-        while (cur->op == cot_cast)
+        while (cur != nullptr && cur->op == cot_cast)
         {
             cur = cur->x;
         }
@@ -72,7 +77,7 @@ protected:
 
     virtual int idaapi visit_expr(cexpr_t* expr) override
     {
-        if (expr->op != cot_call) return 0;
+        if (expr == nullptr || expr->op != cot_call || expr->x == nullptr) return 0;
 
         qstring func_name_q;
         if (expr->x->op == cot_obj)
@@ -103,13 +108,17 @@ protected:
 private:
     uint64_t GetStackBufferSize(cexpr_t* arg_expr)
     {
-        // °þÀë Cast 
+        // ï¿½ï¿½ï¿½ï¿½ Cast 
         cexpr_t* real_expr = SkipCasts(arg_expr);
+        if (real_expr == nullptr)
+        {
+            return 0;
+        }
 
         int idx = -1;
 
         // &buf (cot_ref -> cot_var)
-        if (real_expr->op == cot_ref && real_expr->x->op == cot_var)
+        if (real_expr->op == cot_ref && real_expr->x != nullptr && real_expr->x->op == cot_var)
         {
             idx = real_expr->x->v.idx;
         }
@@ -119,9 +128,9 @@ private:
             idx = real_expr->v.idx;
         }
         // &buf[0] (cot_ref -> cot_idx -> cot_var)
-        else if (real_expr->op == cot_ref && real_expr->x->op == cot_idx)
+        else if (real_expr->op == cot_ref && real_expr->x != nullptr && real_expr->x->op == cot_idx)
         {
-            if (real_expr->x->x->op == cot_var)
+            if (real_expr->x->x != nullptr && real_expr->x->x->op == cot_var)
             {
                 idx = real_expr->x->x->v.idx;
             }
@@ -132,7 +141,7 @@ private:
         if (idx == -1 || m_cfunc == nullptr) return 0;
 
         lvars_t* lvars_ptr = m_cfunc->get_lvars();
-        if (!lvars_ptr || idx >= lvars_ptr->size()) return 0;
+        if (!lvars_ptr || idx < 0 || static_cast<size_t>(idx) >= lvars_ptr->size()) return 0;
 
         lvar_t* var = &(*lvars_ptr)[idx];
         if (var)
@@ -142,11 +151,8 @@ private:
             {
                 size = var->type().get_size();
             }
-            else
-            {
-                size = var->width;
-            }
-            LOG_DEBUG("  [GetSize] Found: %s, Size: %lld\n", var->name.c_str(), size);
+            // Only arrays have a measurable stack buffer size; pointers/scalars yield 0.
+            LOG_DEBUG("  [GetSize] Found: %s, Size: %llu\n", var->name.c_str(), static_cast<unsigned long long>(size));
             return size;
         }
         return 0;
@@ -154,23 +160,27 @@ private:
 
     void CheckGets(cexpr_t* call)
     {
-        if (call->a->size() < 1) return;
+        if (m_results == nullptr || call == nullptr || call->a == nullptr || call->a->size() < 1) return;
         m_results->emplace_back(call->ea, "Stack Overflow(Critical)", "Usage of 'gets'", RiskLevel::CRITICAL);
     }
 
     void CheckStrcpy(cexpr_t* call)
     {
-        if (call->a->size() < 2) return;
+        if (m_results == nullptr || call == nullptr || call->a == nullptr || call->a->size() < 2) return;
 
         cexpr_t* dest = &(*call->a)[0];
         cexpr_t* src = &(*call->a)[1];
 
         uint64_t dest_size = GetStackBufferSize(dest);
         cexpr_t* real_src = SkipCasts(src);
+        if (real_src == nullptr)
+        {
+            return;
+        }
 
         if (dest_size > 0)
         {
-			// src Îª×Ö·û´®³£Á¿
+			// src Îªï¿½Ö·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             if (real_src->op == cot_str)
 	        {
 		        qstring content;
@@ -179,16 +189,16 @@ private:
 	        	{
                     LOG_DEBUG("  [CheckRead] !!! OVERFLOW DETECTED !!!\n");
 	        		qstring msg;
-	        		msg.cat_sprnt("Strcpy Overflow: len %d >= buf %lld", content.length(), dest_size);
+	        		msg.cat_sprnt("Strcpy Overflow: len %llu >= buf %llu", static_cast<unsigned long long>(content.length()), static_cast<unsigned long long>(dest_size));
 	        		m_results->emplace_back(call->ea, "Stack Overflow(Critical)", msg.c_str(), RiskLevel::CRITICAL);
 	        	}
 	        }
-            // src Îª±äÁ¿»ò¸´ÔÓ±í´ïÊ½£¬ÎÞ·¨È·¶¨´óÐ¡
+            // src Îªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó±ï¿½ï¿½ï¿½Ê½ï¿½ï¿½ï¿½Þ·ï¿½È·ï¿½ï¿½ï¿½ï¿½Ð¡
             else
             {
                 LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
                 qstring msg;
-                msg.cat_sprnt("Risky Strcpy: Unknown source len into fixed buf (%lld)", dest_size);
+                msg.cat_sprnt("Risky Strcpy: Unknown source len into fixed buf (%llu)", static_cast<unsigned long long>(dest_size));
                 m_results->emplace_back(call->ea, "Potential Stack Overflow", msg.c_str(), RiskLevel::HIGH);
 			}
         }
@@ -196,33 +206,37 @@ private:
 
     void CheckMemcpy(cexpr_t* call)
     {
-        if (call->a->size() < 3) return;
+        if (m_results == nullptr || call == nullptr || call->a == nullptr || call->a->size() < 3) return;
 
         cexpr_t* dest = &(*call->a)[0];
         cexpr_t* len = &(*call->a)[2];
 
         uint64_t dest_size = GetStackBufferSize(dest);
         cexpr_t* real_len = SkipCasts(len);
+        if (real_len == nullptr)
+        {
+            return;
+        }
 
         if (dest_size > 0)
         {
-			// len ÎªÁ¢¼´Êý
+			// len Îªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             if (real_len->op == cot_num)
 	        {
 		        if (real_len->n->_value > dest_size)
 		        {
                     LOG_DEBUG("  [CheckRead] !!! OVERFLOW DETECTED !!!\n");
 		        	qstring msg;
-		        	msg.cat_sprnt("Memcpy Overflow: Copy %lld > Dst %lld", real_len->n->_value, dest_size);
+		        	msg.cat_sprnt("Memcpy Overflow: Copy %llu > Dst %llu", static_cast<unsigned long long>(real_len->n->_value), static_cast<unsigned long long>(dest_size));
 		        	m_results->emplace_back(call->ea, "Stack Overflow", msg.c_str(), RiskLevel::CRITICAL);
 		        }
 	        }
-			// len Îª±äÁ¿»ò¸´ÔÓ±í´ïÊ½£¬ÎÞ·¨È·¶¨´óÐ¡
+			// len Îªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó±ï¿½ï¿½ï¿½Ê½ï¿½ï¿½ï¿½Þ·ï¿½È·ï¿½ï¿½ï¿½ï¿½Ð¡
             else
             {
                 LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
                 qstring msg;
-                msg.cat_sprnt("Potential Overflow: Memcpy variable size into fixed buf (%lld)", dest_size);
+                msg.cat_sprnt("Potential Overflow: Memcpy variable size into fixed buf (%llu)", static_cast<unsigned long long>(dest_size));
                 m_results->emplace_back(call->ea, "Variable Size Memcpy", msg.c_str(), RiskLevel::HIGH);
             }
         }
@@ -230,7 +244,7 @@ private:
 
     void CheckRead(cexpr_t* call)
     {
-        if (call->a->size() < 3) return;
+        if (m_results == nullptr || call == nullptr || call->a == nullptr || call->a->size() < 3) return;
 
         // read(fd, buf, len)
         cexpr_t* dest = &(*call->a)[1];
@@ -238,28 +252,32 @@ private:
 
         uint64_t dest_size = GetStackBufferSize(dest);
         cexpr_t* real_len = SkipCasts(len);
+        if (real_len == nullptr)
+        {
+            return;
+        }
 
-        LOG_DEBUG("  [CheckRead] DstSize: %lld, WriteLenOp: %d\n", dest_size, real_len->op);
+        LOG_DEBUG("  [CheckRead] DstSize: %llu, WriteLenOp: %d\n", static_cast<unsigned long long>(dest_size), real_len->op);
 
         if (dest_size > 0 )
         {
-            // len ÎªÁ¢¼´Êý
+            // len Îªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
             if (real_len->op == cot_num)
 	        {
 	        	if (real_len->n->_value > dest_size)
 		        {
 	        		LOG_DEBUG("  [CheckRead] !!! OVERFLOW DETECTED !!!\n");
 	        		qstring msg;
-	        		msg.cat_sprnt("Read Overflow: Read %lld > Dst %lld", real_len->n->_value, dest_size);
+	        		msg.cat_sprnt("Read Overflow: Read %llu > Dst %llu", static_cast<unsigned long long>(real_len->n->_value), static_cast<unsigned long long>(dest_size));
 	        		m_results->emplace_back(call->ea, "Stack Overflow", msg.c_str(), RiskLevel::CRITICAL);
 		        }
 	        }
-            // len Îª±äÁ¿»ò¸´ÔÓ±í´ïÊ½£¬ÎÞ·¨È·¶¨´óÐ¡
+            // len Îªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó±ï¿½ï¿½ï¿½Ê½ï¿½ï¿½ï¿½Þ·ï¿½È·ï¿½ï¿½ï¿½ï¿½Ð¡
             else
             {
                 LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
                 qstring msg;
-                msg.cat_sprnt("Potential Overflow: Read variable size into fixed buf (%lld)", dest_size);
+                msg.cat_sprnt("Potential Overflow: Read variable size into fixed buf (%llu)", static_cast<unsigned long long>(dest_size));
                 m_results->emplace_back(call->ea, "Variable Size Read", msg.c_str(), RiskLevel::HIGH);
 			}
 
