@@ -198,7 +198,12 @@ private:
 				info.cat_sprnt("Format String: Non-literal argument used in '%s' (Op: %d)", func_name.c_str(), real_fmt->op);
 			}
 
-			m_results->emplace_back(call->ea, "Format String Vulnerability", info.c_str(), risk);
+			m_results->emplace_back(call->ea,
+				"Format String Vulnerability",
+				info.c_str(),
+				risk,
+				"Patch: trampoline into .eh_frame_hdr/.eh_frame, rewrite call as printf(\"%s\", original_arg) and return.",
+				PatchAction::FRAME_FMT_SAFE_CALL);
 
 			LOG_DEBUG("[FmtDetector] Found vuln at %a: %s\n", call->ea, info.c_str());
 		}

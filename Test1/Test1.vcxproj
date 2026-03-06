@@ -22,8 +22,10 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AdvancedPwnDetectors.hpp" />
     <ClInclude Include="FormatStringDetector.hpp" />
     <ClInclude Include="IDetector.hpp" />
+    <ClInclude Include="PatchEngine.hpp" />
     <ClInclude Include="ScannerEngine.hpp" />
     <ClInclude Include="StackDetector.hpp" />
     <ClInclude Include="VulnData.hpp" />

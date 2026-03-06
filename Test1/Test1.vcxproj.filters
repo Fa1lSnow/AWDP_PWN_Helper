@@ -20,6 +20,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AdvancedPwnDetectors.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
     <ClInclude Include="VulnData.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -33,6 +36,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="FormatStringDetector.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="PatchEngine.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

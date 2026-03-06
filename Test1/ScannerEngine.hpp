@@ -16,6 +16,7 @@
 #include "IDetector.hpp"
 #include "StackDetector.hpp"
 #include "FormatStringDetector.hpp"
+#include "AdvancedPwnDetectors.hpp"
 
 //DEMO TEST
 class DemoDetector : public IVulnDetector
@@ -57,6 +58,8 @@ public:
 	{
 		RegisterDetector(std::make_unique<StackDetector>());
 		RegisterDetector(std::make_unique<FormatStringDetector>());
+		RegisterDetector(std::make_unique<HeapAndIntegerDetector>());
+		RegisterDetector(std::make_unique<DangerousCallDetector>());
 	}
 
 	~ScannerEngine() = default;
@@ -110,8 +113,14 @@ public:
 			}
 
 			// ����plt��
+			segment_t* seg = getseg(pFunc->start_ea);
+			if (seg == nullptr)
+			{
+				continue;
+			}
+
 			qstring seg_name;
-			get_segm_name(&seg_name, getseg(pFunc->start_ea));
+			get_segm_name(&seg_name, seg);
 			if (seg_name == ".plt" || seg_name == ".plt.got" || seg_name == ".plt.sec")
 			{
 				continue;
@@ -124,7 +133,6 @@ public:
 			}
 
 			// ���� extern �� data ��
-			segment_t* seg = getseg(pFunc->start_ea);
 			if (seg)
 			{
 				if (seg->type == SEG_XTRN || seg->type == SEG_DATA)
