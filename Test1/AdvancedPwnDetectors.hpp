@@ -446,9 +446,9 @@ private:
 			qstring detail;
 			if (slot_ea != BADADDR)
 			{
-				detail.cat_sprnt("悬垂指针风险：已释放目标 '%s' 在函数结束前仍全局可达且未置空（slot=%a）。", key.c_str(), slot_ea);
+				detail.cat_sprnt("Dangling pointer risk: freed target '%s' remains globally reachable and is not reset to NULL before function exit (slot=%a).", key.c_str(), slot_ea);
 				m_results->emplace_back(ea,
-					"悬垂指针",
+					"Dangling Pointer",
 					detail.c_str(),
 					RiskLevel::CRITICAL,
 					"Patch: jmp to .eh_frame trampoline, call free, then clear resolved slot address to NULL.",
@@ -458,12 +458,12 @@ private:
 			}
 			else
 			{
-				detail.cat_sprnt("悬垂指针风险：已释放目标 '%s' 在函数结束前仍全局可达且未置空。", key.c_str());
+				detail.cat_sprnt("Dangling pointer risk: freed target '%s' remains globally reachable and is not reset to NULL before function exit.", key.c_str());
 				ea_t dyn_base = BADADDR;
 				if (TryParseObjBaseFromKey(key, dyn_base))
 				{
 					m_results->emplace_back(ea,
-						"悬垂指针",
+						"Dangling Pointer",
 						detail.c_str(),
 						RiskLevel::CRITICAL,
 						"Patch: jmp to .eh_frame trampoline, call free, recompute notes[idx]-style slot, then clear slot to NULL.",
@@ -474,7 +474,7 @@ private:
 				}
 
 				m_results->emplace_back(ea,
-					"悬垂指针",
+					"Dangling Pointer",
 					detail.c_str(),
 					RiskLevel::CRITICAL,
 					"Patch: unresolved dynamic slot address. Manually add slot NULLing right after free.",
