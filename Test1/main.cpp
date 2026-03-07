@@ -163,19 +163,15 @@ public:
 		// 执行扫描并填充结果
 		engine.ScanAll(chooser->entries);
 
-		ea_t start_ea = get_name_ea(BADADDR, "_start");
-		if (start_ea == BADADDR)
-		{
-			start_ea = get_name_ea(BADADDR, "start");
-		}
-		if (start_ea != BADADDR)
+		ea_t start_ea = BADADDR;
+		if (PatchEngine::ResolveEntryStart(start_ea))
 		{
 			chooser->entries.emplace_back(
 				start_ea,
 				"Generic Defense",
-				"Optional startup hardening: hook _start before __libc_start_main and apply prctl restrictions.",
+				"Optional startup hardening: hook start entry before __libc_start_main and apply prctl restrictions.",
 				RiskLevel::MEDIUM,
-				"Patch: install _start trampoline and apply default prctl hardening before handing off to __libc_start_main.",
+				"Patch: install start-entry trampoline and apply default prctl hardening before handing off to __libc_start_main.",
 				PatchAction::START_PRCTL_HARDEN);
 		}
 

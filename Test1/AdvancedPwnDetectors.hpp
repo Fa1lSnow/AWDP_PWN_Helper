@@ -27,10 +27,6 @@ private:
 
 	VulnList* m_results;
 	cfunc_t* m_cfunc;
-	// 释放状态跟踪：按局部变量、全局对象、表达式键三种粒度并行记录
-	// 这样可以覆盖 var/obj/idx/ref 等不同 AST 形态，降低漏报
-	std::unordered_set<int> m_freed_vars;
-	std::unordered_set<ea_t> m_freed_objs;
 	std::unordered_set<std::string> m_freed_targets;
 	// 延迟上报：函数扫描完后再输出“未清空悬垂指针”结果，
 	// 避免中间路径被后续赋值修正时提前误报
@@ -55,8 +51,6 @@ public:
 
 		m_results = &result;
 		m_cfunc = cfunc;
-		m_freed_vars.clear();
-		m_freed_objs.clear();
 		m_freed_targets.clear();
 		m_pending_dangling.clear();
 		this->apply_to(&cfunc->body, nullptr);
@@ -93,7 +87,6 @@ protected:
 			return 0;
 		}
 
-		ReportDanglingPointerUse(expr, func_name);
 		CheckAllocatorIntegerRisk(expr, func_name);
 
 		return 0;
@@ -196,37 +189,16 @@ private:
 		return name == "malloc" || name == "calloc" || name == "realloc" || name == "operator new";
 	}
 
-	bool ExtractVarOrObj(cexpr_t* expr, int& var_idx, ea_t& obj_ea) const
+	enum class SizeExprRisk
 	{
-		cexpr_t* real = SkipCasts(expr);
-		if (real == nullptr)
-		{
-			return false;
-		}
+		NONE,
+		LOW,
+		HIGH
+	};
 
-		if (real->op == cot_ref && real->x != nullptr)
-		{
-			real = SkipCasts(real->x);
-		}
-
-		if (real == nullptr)
-		{
-			return false;
-		}
-
-		if (real->op == cot_var)
-		{
-			var_idx = real->v.idx;
-			return true;
-		}
-
-		if (real->op == cot_obj)
-		{
-			obj_ea = real->obj_ea;
-			return true;
-		}
-
-		return false;
+	static SizeExprRisk MergeRisk(SizeExprRisk a, SizeExprRisk b)
+	{
+		return static_cast<int>(a) > static_cast<int>(b) ? a : b;
 	}
 
 	std::string BuildExprKey(cexpr_t* expr, int depth = 0) const
@@ -474,9 +446,9 @@ private:
 			qstring detail;
 			if (slot_ea != BADADDR)
 			{
-				detail.cat_sprnt("Potential dangling-pointer: freed target '%s' remains globally reachable and is not reset before function exit (slot=%a).", key.c_str(), slot_ea);
+				detail.cat_sprnt("悬垂指针风险：已释放目标 '%s' 在函数结束前仍全局可达且未置空（slot=%a）。", key.c_str(), slot_ea);
 				m_results->emplace_back(ea,
-					"Dangling Pointer",
+					"悬垂指针",
 					detail.c_str(),
 					RiskLevel::CRITICAL,
 					"Patch: jmp to .eh_frame trampoline, call free, then clear resolved slot address to NULL.",
@@ -486,12 +458,12 @@ private:
 			}
 			else
 			{
-				detail.cat_sprnt("Potential dangling-pointer: freed target '%s' remains globally reachable and is not reset before function exit.", key.c_str());
+				detail.cat_sprnt("悬垂指针风险：已释放目标 '%s' 在函数结束前仍全局可达且未置空。", key.c_str());
 				ea_t dyn_base = BADADDR;
 				if (TryParseObjBaseFromKey(key, dyn_base))
 				{
 					m_results->emplace_back(ea,
-						"Dangling Pointer",
+						"悬垂指针",
 						detail.c_str(),
 						RiskLevel::CRITICAL,
 						"Patch: jmp to .eh_frame trampoline, call free, recompute notes[idx]-style slot, then clear slot to NULL.",
@@ -502,7 +474,7 @@ private:
 				}
 
 				m_results->emplace_back(ea,
-					"Dangling Pointer",
+					"悬垂指针",
 					detail.c_str(),
 					RiskLevel::CRITICAL,
 					"Patch: unresolved dynamic slot address. Manually add slot NULLing right after free.",
@@ -511,41 +483,10 @@ private:
 		}
 	}
 
-	bool IsFreedTargetAlias(const std::string& key) const
-	{
-		if (key.empty())
-		{
-			return false;
-		}
-
-		for (const auto& cur : m_freed_targets)
-		{
-			if (cur == key || cur.find(key) != std::string::npos || key.find(cur) != std::string::npos)
-			{
-				return true;
-			}
-		}
-
-		return false;
-	}
-
 	void ClearFreedState(cexpr_t* lhs)
 	{
 		// 一旦发生写入，相关“已释放”状态应失效，
 		// 否则会把重新赋值后的指针误判为悬垂使用
-		int var_idx = -1;
-		ea_t obj_ea = BADADDR;
-		bool has_var_or_obj = ExtractVarOrObj(lhs, var_idx, obj_ea);
-
-		if (has_var_or_obj && var_idx >= 0)
-		{
-			m_freed_vars.erase(var_idx);
-		}
-		if (has_var_or_obj && obj_ea != BADADDR)
-		{
-			m_freed_objs.erase(obj_ea);
-		}
-
 		std::string key = BuildExprKey(lhs);
 		if (!key.empty())
 		{
@@ -563,178 +504,13 @@ private:
 
 		cexpr_t* target_expr = &(*call->a)[0];
 		std::string target_key = BuildExprKey(target_expr);
-
-		int var_idx = -1;
-		ea_t obj_ea = BADADDR;
-		bool has_var_or_obj = ExtractVarOrObj(target_expr, var_idx, obj_ea);
-		if (!has_var_or_obj && target_key.empty())
+		if (target_key.empty())
 		{
 			return;
 		}
 
-		bool already_freed = false;
-		if (var_idx >= 0)
-		{
-			already_freed = (m_freed_vars.find(var_idx) != m_freed_vars.end());
-		}
-		else if (obj_ea != BADADDR)
-		{
-			already_freed = (m_freed_objs.find(obj_ea) != m_freed_objs.end());
-		}
-		if (!already_freed && !target_key.empty())
-		{
-			already_freed = (m_freed_targets.find(target_key) != m_freed_targets.end());
-		}
-
-		if (already_freed)
-		{
-			m_results->emplace_back(call->ea,
-				"Double Free",
-				"Potential double free: same pointer appears to be freed multiple times in one function path.",
-				RiskLevel::CRITICAL,
-				"Patch: add NULLing/reassignment after free and ensure ownership transfer checks before deallocation.",
-				PatchAction::NOP_CALL);
-		}
-
-		if (var_idx >= 0)
-		{
-			m_freed_vars.insert(var_idx);
-		}
-		if (obj_ea != BADADDR)
-		{
-			m_freed_objs.insert(obj_ea);
-		}
-		if (!target_key.empty())
-		{
-			m_freed_targets.insert(target_key);
-			TrackDanglingCandidate(target_key, target_expr, call->ea);
-		}
-	}
-
-	void GatherFreedRefs(cexpr_t* expr, bool& found, int depth = 0) const
-	{
-		// 大深度保护，避免在恶意或退化 AST 上递归失控
-		if (expr == nullptr || found || depth > 128)
-		{
-			return;
-		}
-
-		cexpr_t* real = SkipCasts(expr);
-		if (real == nullptr)
-		{
-			return;
-		}
-
-		if (real->op == cot_var)
-		{
-			std::string key = BuildExprKey(real);
-			if (!key.empty() && m_freed_targets.find(key) != m_freed_targets.end())
-			{
-				found = true;
-				return;
-			}
-
-			if (m_freed_vars.find(real->v.idx) != m_freed_vars.end())
-			{
-				found = true;
-			}
-			return;
-		}
-
-		if (real->op == cot_obj)
-		{
-			std::string key = BuildExprKey(real);
-			if (!key.empty() && m_freed_targets.find(key) != m_freed_targets.end())
-			{
-				found = true;
-				return;
-			}
-
-			if (m_freed_objs.find(real->obj_ea) != m_freed_objs.end())
-			{
-				found = true;
-			}
-			return;
-		}
-
-		std::string expr_key = BuildExprKey(real);
-		if (!expr_key.empty() && m_freed_targets.find(expr_key) != m_freed_targets.end())
-		{
-			found = true;
-			return;
-		}
-
-		if (real->op == cot_ref && real->x != nullptr)
-		{
-			GatherFreedRefs(real->x, found, depth + 1);
-			return;
-		}
-
-		if (real->op == cot_idx && real->x != nullptr)
-		{
-			GatherFreedRefs(real->x, found, depth + 1);
-			return;
-		}
-
-		if (real->op == cot_call && real->a != nullptr)
-		{
-			for (size_t i = 0; i < real->a->size(); ++i)
-			{
-				GatherFreedRefs(&(*real->a)[i], found, depth + 1);
-				if (found)
-				{
-					return;
-				}
-			}
-		}
-	}
-
-	void ReportDanglingPointerUse(cexpr_t* call, const std::string& func_name)
-	{
-		if (m_results == nullptr || call->a == nullptr)
-		{
-			return;
-		}
-
-		for (size_t i = 0; i < call->a->size(); ++i)
-		{
-			cexpr_t* arg = SkipCasts(&(*call->a)[i]);
-			if (arg == nullptr)
-			{
-				continue;
-			}
-
-			bool found_freed = false;
-
-			std::string arg_key = BuildExprKey(arg);
-			if (!arg_key.empty() && IsFreedTargetAlias(arg_key))
-			{
-				found_freed = true;
-			}
-			else if (arg->op == cot_var && m_freed_vars.find(arg->v.idx) != m_freed_vars.end())
-			{
-				found_freed = true;
-			}
-			else if (arg->op == cot_obj && m_freed_objs.find(arg->obj_ea) != m_freed_objs.end())
-			{
-				found_freed = true;
-			}
-
-			if (found_freed)
-			{
-				qstring detail;
-				detail.cat_sprnt("Potential dangling-pointer use: argument %llu in call '%s' references memory freed earlier in this function.",
-					static_cast<unsigned long long>(i),
-					func_name.c_str());
-				m_results->emplace_back(call->ea,
-					"Dangling Pointer",
-					detail.c_str(),
-					RiskLevel::CRITICAL,
-					"Patch: mark .eh_frame_hdr/.eh_frame executable, trampoline, clear arg0 pointer before safe continuation.",
-					PatchAction::FRAME_CLEAR_ARG0_CALL);
-				return;
-			}
-		}
+		m_freed_targets.insert(target_key);
+		TrackDanglingCandidate(target_key, target_expr, call->ea);
 	}
 
 	bool IsConstExpr(cexpr_t* expr, int depth = 0) const
@@ -763,31 +539,84 @@ private:
 		return false;
 	}
 
-	bool IsOverflowProneSizeExpr(cexpr_t* expr, int depth = 0) const
+	SizeExprRisk EvaluateSizeExprRisk(cexpr_t* expr, int depth = 0) const
 	{
-		// 仅将“非常量算术”视为可疑；纯常量表达式默认认为编译期已固定
 		if (depth > 128)
 		{
-			return false;
+			return SizeExprRisk::LOW;
 		}
 
 		cexpr_t* real = SkipCasts(expr);
 		if (real == nullptr)
 		{
-			return false;
+			return SizeExprRisk::NONE;
 		}
 
-		if (real->op == cot_mul || real->op == cot_add || real->op == cot_shl)
+		if (real->op == cot_num)
 		{
-			if (!IsConstExpr(real, depth + 1))
+			return SizeExprRisk::NONE;
+		}
+
+		if (real->op == cot_var || real->op == cot_obj)
+		{
+			return SizeExprRisk::LOW;
+		}
+
+		if ((real->op == cot_add || real->op == cot_sub) && real->x != nullptr && real->y != nullptr)
+		{
+			SizeExprRisk lhs = EvaluateSizeExprRisk(real->x, depth + 1);
+			SizeExprRisk rhs = EvaluateSizeExprRisk(real->y, depth + 1);
+			SizeExprRisk merged = MergeRisk(lhs, rhs);
+			if (lhs != SizeExprRisk::NONE && rhs != SizeExprRisk::NONE)
 			{
-				return true;
+				return MergeRisk(SizeExprRisk::LOW, merged);
+			}
+			return merged;
+		}
+
+		if (real->op == cot_mul && real->x != nullptr && real->y != nullptr)
+		{
+			cexpr_t* x = SkipCasts(real->x);
+			cexpr_t* y = SkipCasts(real->y);
+			if (x == nullptr || y == nullptr)
+			{
+				return SizeExprRisk::LOW;
 			}
 
-			return IsOverflowProneSizeExpr(real->x, depth + 1) || IsOverflowProneSizeExpr(real->y, depth + 1);
+			if (x->op == cot_num && y->op == cot_num)
+			{
+				return SizeExprRisk::NONE;
+			}
+
+			if (x->op == cot_num || y->op == cot_num)
+			{
+				cexpr_t* c = (x->op == cot_num) ? x : y;
+				const uint64 k = c->n->_value;
+				return (k <= 4) ? SizeExprRisk::LOW : SizeExprRisk::HIGH;
+			}
+
+			return SizeExprRisk::HIGH;
 		}
 
-		return false;
+		if (real->op == cot_shl && real->x != nullptr && real->y != nullptr)
+		{
+			cexpr_t* shift = SkipCasts(real->y);
+			if (shift != nullptr && shift->op == cot_num)
+			{
+				const uint64 bits = shift->n->_value;
+				return (bits <= 2) ? SizeExprRisk::LOW : SizeExprRisk::HIGH;
+			}
+			return SizeExprRisk::HIGH;
+		}
+
+		if (real->x != nullptr || real->y != nullptr)
+		{
+			SizeExprRisk lhs = real->x != nullptr ? EvaluateSizeExprRisk(real->x, depth + 1) : SizeExprRisk::NONE;
+			SizeExprRisk rhs = real->y != nullptr ? EvaluateSizeExprRisk(real->y, depth + 1) : SizeExprRisk::NONE;
+			return MergeRisk(lhs, rhs);
+		}
+
+		return SizeExprRisk::LOW;
 	}
 
 	void CheckAllocatorIntegerRisk(cexpr_t* call, const std::string& func_name)
@@ -800,13 +629,13 @@ private:
 		if ((func_name == "malloc" || func_name == "operator new") && call->a->size() >= 1)
 		{
 			cexpr_t* size_expr = &(*call->a)[0];
-			if (IsOverflowProneSizeExpr(size_expr))
+			if (EvaluateSizeExprRisk(size_expr) == SizeExprRisk::HIGH)
 			{
 				m_results->emplace_back(call->ea,
 					"Integer Overflow to Heap Overflow",
-					"Allocator size expression uses non-constant arithmetic that may wrap/truncate before allocation.",
+					"Allocator size expression contains high-risk arithmetic (multi-variable multiply/large-scale growth) that may wrap before allocation.",
 					RiskLevel::HIGH,
-					"Patch: add overflow guards before allocation (e.g., if (n != 0 && size > SIZE_MAX / n) fail).",
+					"Patch: add checked arithmetic guard before allocation (e.g., reject on multiplication/shift overflow).",
 					PatchAction::NONE);
 			}
 		}
@@ -814,11 +643,11 @@ private:
 		if (func_name == "realloc" && call->a->size() >= 2)
 		{
 			cexpr_t* size_expr = &(*call->a)[1];
-			if (IsOverflowProneSizeExpr(size_expr))
+			if (EvaluateSizeExprRisk(size_expr) == SizeExprRisk::HIGH)
 			{
 				m_results->emplace_back(call->ea,
 					"Integer Overflow to Heap Overflow",
-					"realloc size expression appears overflow-prone (arithmetic on variable terms).",
+					"realloc size expression contains high-risk arithmetic (multi-variable multiply/large-scale growth).",
 					RiskLevel::HIGH,
 					"Patch: validate computed size with checked arithmetic before realloc.",
 					PatchAction::NONE);
@@ -829,11 +658,13 @@ private:
 		{
 			cexpr_t* n_expr = &(*call->a)[0];
 			cexpr_t* sz_expr = &(*call->a)[1];
-			if (!IsConstExpr(n_expr) || !IsConstExpr(sz_expr))
+			SizeExprRisk nr = EvaluateSizeExprRisk(n_expr);
+			SizeExprRisk sr = EvaluateSizeExprRisk(sz_expr);
+			if (nr == SizeExprRisk::HIGH || sr == SizeExprRisk::HIGH)
 			{
 				m_results->emplace_back(call->ea,
 					"Integer Overflow to Heap Overflow",
-					"calloc(count, size) uses non-constant terms; count * size may overflow.",
+					"calloc(count, size) uses high-risk size terms; count * size may overflow.",
 					RiskLevel::HIGH,
 					"Patch: add checked multiplication before calloc and reject overflowed products.",
 					PatchAction::NONE);
