@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <functional>
 #include <string>
+#include <cctype>
 #include "IDetector.hpp"
 
 #ifdef _DEBUG
@@ -24,6 +25,7 @@ private:
     std::unordered_set<int> m_boundary_full_copy_vars;
     std::unordered_set<int> m_bytewise_read_ptr_vars;
     std::unordered_set<int> m_incremented_ptr_vars;
+    std::unordered_set<int> m_byte_input_char_vars;
 
 public:
     StackDetector() : ctree_visitor_t(CV_FAST)
@@ -82,6 +84,7 @@ public:
         m_boundary_full_copy_vars.clear();
         m_bytewise_read_ptr_vars.clear();
         m_incremented_ptr_vars.clear();
+        m_byte_input_char_vars.clear();
         this->apply_to(&cfunc->body, nullptr);
     }
 
@@ -114,6 +117,7 @@ protected:
         if (expr->op == cot_asg)
         {
             TrackPointerIncrement(expr);
+            TrackByteInputDataflow(expr);
             CheckOffByNullWrite(expr);
             return 0;
         }
@@ -251,6 +255,207 @@ private:
         return -1;
     }
 
+    static std::string NormalizeSymbol(std::string name)
+    {
+        for (char& ch : name)
+        {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+
+        size_t at = name.find('@');
+        if (at != std::string::npos)
+        {
+            name = name.substr(0, at);
+        }
+
+        while (!name.empty() && (name[0] == '_' || name[0] == '.'))
+        {
+            name.erase(0, 1);
+        }
+
+        const char* kPrefixes[] = {
+            "sym.imp.",
+            "__imp_",
+            "imp_",
+            "j_",
+            "gi_",
+            "io_",
+            "isoc99_",
+            "__gi_",
+            "__io_",
+            "__isoc99_"
+        };
+
+        bool stripped = true;
+        while (stripped)
+        {
+            stripped = false;
+            for (const char* p : kPrefixes)
+            {
+                std::string pref(p);
+                if (name.rfind(pref, 0) == 0)
+                {
+                    name.erase(0, pref.size());
+                    stripped = true;
+                }
+            }
+            while (!name.empty() && (name[0] == '_' || name[0] == '.'))
+            {
+                name.erase(0, 1);
+                stripped = true;
+            }
+        }
+
+        return name;
+    }
+
+    bool IsGetcLike(const std::string& name) const
+    {
+        const std::string n = NormalizeSymbol(name);
+        return n == "getc" || n == "fgetc" || n == "getchar"
+            || n == "getc_unlocked" || n == "fgetc_unlocked"
+            || n == "io_getc" || n == "_io_getc";
+    }
+
+    bool GetCallNameFromExpr(cexpr_t* call, std::string& out_name) const
+    {
+        if (call == nullptr || call->op != cot_call || call->x == nullptr)
+        {
+            return false;
+        }
+
+        qstring func_name_q;
+        if (call->x->op == cot_obj)
+        {
+            get_func_name(&func_name_q, call->x->obj_ea);
+        }
+        else if (call->x->op == cot_helper)
+        {
+            func_name_q = call->x->helper;
+        }
+        else
+        {
+            return false;
+        }
+
+        out_name = func_name_q.c_str();
+        return !out_name.empty();
+    }
+
+    int GetPointerWriteVarIdx(cexpr_t* lhs, bool* out_incremented = nullptr)
+    {
+        if (out_incremented != nullptr)
+        {
+            *out_incremented = false;
+        }
+
+        cexpr_t* real_lhs = SkipCasts(lhs);
+        if (real_lhs == nullptr || real_lhs->op != cot_ptr || real_lhs->x == nullptr)
+        {
+            return -1;
+        }
+
+        cexpr_t* ptr_expr = SkipCasts(real_lhs->x);
+        if (ptr_expr == nullptr)
+        {
+            return -1;
+        }
+
+        if ((ptr_expr->op == cot_postinc || ptr_expr->op == cot_preinc) && ptr_expr->x != nullptr)
+        {
+            cexpr_t* base = SkipCasts(ptr_expr->x);
+            if (base != nullptr && base->op == cot_var)
+            {
+                if (out_incremented != nullptr)
+                {
+                    *out_incremented = true;
+                }
+                return base->v.idx;
+            }
+        }
+
+        if (ptr_expr->op == cot_var)
+        {
+            return ptr_expr->v.idx;
+        }
+
+        if (ptr_expr->op == cot_idx && ptr_expr->x != nullptr)
+        {
+            cexpr_t* base = SkipCasts(ptr_expr->x);
+            cexpr_t* idx = SkipCasts(ptr_expr->y);
+            if (base != nullptr && base->op == cot_var)
+            {
+                if (idx == nullptr || (idx->op == cot_num && idx->n->_value == 0))
+                {
+                    return base->v.idx;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    void TrackByteInputDataflow(cexpr_t* asg)
+    {
+        if (asg == nullptr || asg->x == nullptr || asg->y == nullptr)
+        {
+            return;
+        }
+
+        int lhs_var_idx = GetSimpleVarIdx(asg->x);
+        cexpr_t* rhs = SkipCasts(asg->y);
+        if (rhs == nullptr)
+        {
+            return;
+        }
+
+        if (lhs_var_idx >= 0)
+        {
+            if (rhs->op == cot_var && m_byte_input_char_vars.find(rhs->v.idx) != m_byte_input_char_vars.end())
+            {
+                m_byte_input_char_vars.insert(lhs_var_idx);
+            }
+            else if (rhs->op == cot_call)
+            {
+                std::string call_name;
+                if (GetCallNameFromExpr(rhs, call_name) && IsGetcLike(call_name))
+                {
+                    m_byte_input_char_vars.insert(lhs_var_idx);
+                }
+            }
+        }
+
+        bool write_with_inc = false;
+        int ptr_idx = GetPointerWriteVarIdx(asg->x, &write_with_inc);
+        if (ptr_idx < 0)
+        {
+            return;
+        }
+
+        bool byte_src = false;
+        if (rhs->op == cot_var && m_byte_input_char_vars.find(rhs->v.idx) != m_byte_input_char_vars.end())
+        {
+            byte_src = true;
+        }
+        else if (rhs->op == cot_call)
+        {
+            std::string call_name;
+            if (GetCallNameFromExpr(rhs, call_name) && IsGetcLike(call_name))
+            {
+                byte_src = true;
+            }
+        }
+
+        if (byte_src)
+        {
+            m_bytewise_read_ptr_vars.insert(ptr_idx);
+            if (write_with_inc)
+            {
+                m_incremented_ptr_vars.insert(ptr_idx);
+            }
+        }
+    }
+
     void TrackByteReadPointer(const std::string& name, cexpr_t* call)
     {
         if (call == nullptr || call->a == nullptr || call->a->size() < 3)
@@ -287,6 +492,17 @@ private:
         cexpr_t* rhs = SkipCasts(asg->y);
         if (lhs == nullptr || rhs == nullptr || lhs->op != cot_var)
         {
+            return;
+        }
+
+        if (rhs->op == cot_asgadd && rhs->x != nullptr && rhs->y != nullptr)
+        {
+            cexpr_t* rx = SkipCasts(rhs->x);
+            cexpr_t* ry = SkipCasts(rhs->y);
+            if (rx != nullptr && ry != nullptr && rx->op == cot_var && rx->v.idx == lhs->v.idx && ry->op == cot_num && ry->n->_value == 1)
+            {
+                m_incremented_ptr_vars.insert(lhs->v.idx);
+            }
             return;
         }
 
@@ -615,7 +831,7 @@ private:
             {
                 m_results->emplace_back(asg->ea,
                     "Off-by-Null",
-                    "Potential off-by-null: pointer is incremented after byte-wise input and then null-terminated at current position.",
+                    "Potential off-by-null: byte-wise input stream is written through pointer cursor and then null-terminated at current cursor position.",
                     RiskLevel::HIGH,
                     "Patch: stop write loop at max-1 and write terminator within allocated range.",
                     PatchAction::NONE);
@@ -625,6 +841,24 @@ private:
 
         if (base_expr == nullptr || idx_expr == nullptr)
         {
+            return;
+        }
+
+        int base_ptr_idx = GetSimpleVarIdx(base_expr);
+        cexpr_t* raw_idx = SkipCasts(idx_expr);
+        if (base_ptr_idx >= 0
+            && raw_idx != nullptr
+            && raw_idx->op == cot_num
+            && raw_idx->n->_value == 0
+            && m_bytewise_read_ptr_vars.find(base_ptr_idx) != m_bytewise_read_ptr_vars.end()
+            && m_incremented_ptr_vars.find(base_ptr_idx) != m_incremented_ptr_vars.end())
+        {
+            m_results->emplace_back(asg->ea,
+                "Off-by-Null",
+                "Potential off-by-null: byte-wise input pointer is null-terminated via index form at current cursor position.",
+                RiskLevel::HIGH,
+                "Patch: reserve one extra byte for terminator and ensure growth condition guarantees space before final null write.",
+                PatchAction::NONE);
             return;
         }
 

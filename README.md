@@ -97,15 +97,9 @@ cmake --build --preset default
 
 Windows 多配置生成器（VS）可使用：
 
-```powershell
+```bash
 cmake -S . -B build -DIDA_SDK_ROOT=E:/CppTools/ida-sdk-main
 cmake --build build --config Release
-```
-
-可选：设置 `IDA_PLUGIN_DIR` 后执行安装
-
-```bash
-cmake --install build
 ```
 
 ### 产物说明

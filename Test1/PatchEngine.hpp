@@ -16,30 +16,88 @@
 class PatchEngine
 {
 public:
+	static bool ResolveEntryStart(ea_t& out_ea, qstring* out_name = nullptr)
+	{
+		out_ea = BADADDR;
+
+		const char* kCandidates[] = { "_start", "start", ".start", "__start" };
+		for (const char* name : kCandidates)
+		{
+			ea_t ea = get_name_ea(BADADDR, name);
+			if (ea != BADADDR)
+			{
+				out_ea = ea;
+				if (out_name != nullptr)
+				{
+					*out_name = name;
+				}
+				return true;
+			}
+		}
+
+		size_t qty = get_func_qty();
+		for (size_t i = 0; i < qty; ++i)
+		{
+			func_t* f = getn_func(i);
+			if (f == nullptr)
+			{
+				continue;
+			}
+
+			qstring fn;
+			get_func_name(&fn, f->start_ea);
+			if (fn.empty())
+			{
+				continue;
+			}
+
+			qstring norm = fn;
+			while (!norm.empty() && (norm[0] == '_' || norm[0] == '.'))
+			{
+				norm.remove(0, 1);
+			}
+			for (size_t j = 0; j < norm.length(); ++j)
+			{
+				norm[j] = static_cast<char>(std::tolower(static_cast<unsigned char>(norm[j])));
+			}
+			if (norm == "start")
+			{
+				out_ea = f->start_ea;
+				if (out_name != nullptr)
+				{
+					*out_name = fn;
+				}
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	static bool ApplyDefaultStartPrctlMitigation(qstring& out_msg)
 	{
 		// _start 防护补丁流程：定位 __libc_start_main 调用点，
 		// 在 frame 段写入 trampoline，先执行 prctl/seccomp，再回到原流程
-		ea_t start_ea = get_name_ea(BADADDR, "_start");
-		if (start_ea == BADADDR)
+		ea_t start_ea = BADADDR;
+		qstring start_name;
+		if (!ResolveEntryStart(start_ea, &start_name))
 		{
-			start_ea = get_name_ea(BADADDR, "start");
-		}
-		if (start_ea == BADADDR)
-		{
-			out_msg = "_start symbol not found.";
+			out_msg = "entry symbol not found (tried _start/start variants).";
 			return false;
 		}
 
 		func_t* f = get_func(start_ea);
 		if (f == nullptr)
 		{
-			out_msg = "_start function metadata not found.";
+			out_msg.cat_sprnt("entry function metadata not found: %s.", start_name.c_str());
 			return false;
 		}
 
 		ea_t call_ea = BADADDR;
 		ea_t libc_ptr_slot = BADADDR;
+		ea_t libc_call_target = BADADDR;
+		size_t call_insn_size = 0;
+		bool call_is_indirect = false;
 		for (ea_t ea = f->start_ea; ea != BADADDR && ea < f->end_ea; ea = next_head(ea, f->end_ea))
 		{
 			insn_t insn;
@@ -67,19 +125,43 @@ public:
 				int32 disp = static_cast<int32>(ReadU32(ea + 2));
 				libc_ptr_slot = ea + 6 + disp;
 				call_ea = ea;
+				call_insn_size = insn.size;
+				call_is_indirect = true;
+				break;
+			}
+
+			if (insn.size == 5 && get_byte(ea) == 0xE8)
+			{
+				int32 disp = static_cast<int32>(ReadU32(ea + 1));
+				libc_call_target = ea + 5 + disp;
+				call_ea = ea;
+				call_insn_size = insn.size;
+				call_is_indirect = false;
 				break;
 			}
 		}
 
-		if (call_ea == BADADDR || libc_ptr_slot == BADADDR)
+		if (call_ea == BADADDR)
 		{
-			out_msg = "__libc_start_main indirect callsite not found in _start.";
+			out_msg.cat_sprnt("__libc_start_main callsite not found in entry: %s.", start_name.c_str());
+			return false;
+		}
+
+		if (call_is_indirect && libc_ptr_slot == BADADDR)
+		{
+			out_msg.cat_sprnt("__libc_start_main indirect slot not resolved in entry: %s.", start_name.c_str());
+			return false;
+		}
+
+		if (!call_is_indirect && libc_call_target == BADADDR)
+		{
+			out_msg.cat_sprnt("__libc_start_main direct target not resolved in entry: %s.", start_name.c_str());
 			return false;
 		}
 
 		bool repatching = (get_byte(call_ea) == 0xE9);
 
-		ea_t ret_ea = call_ea + 6;
+		ea_t ret_ea = call_ea + call_insn_size;
 		if (!Is64Bit())
 		{
 			out_msg = "_start prctl mitigation currently supports x64 only.";
@@ -109,8 +191,17 @@ public:
 		emit({0x48,0x83,0xC4,0x10});
 
 		emit({0x41,0x59,0x41,0x58,0x59,0x5A,0x5E,0x5F});
-		size_t call_slot_disp_pos = stub.size() + 2;
-		emit({0xFF,0x15,0,0,0,0});
+		size_t call_disp_pos = stub.size();
+		if (call_is_indirect)
+		{
+			call_disp_pos = stub.size() + 2;
+			emit({0xFF,0x15,0,0,0,0});
+		}
+		else
+		{
+			call_disp_pos = stub.size() + 1;
+			emit({0xE8,0,0,0,0});
+		}
 		size_t jmp_back_disp_pos = stub.size() + 1;
 		emit({0xE9,0,0,0,0});
 
@@ -195,16 +286,17 @@ public:
 		stub[lea_filter_disp_pos + 2] = static_cast<uint8>((rel_filter >> 16) & 0xFF);
 		stub[lea_filter_disp_pos + 3] = static_cast<uint8>((rel_filter >> 24) & 0xFF);
 
-		int32 rel_slot = 0;
-		if (!CalcRel32(cave + (call_slot_disp_pos + 4), libc_ptr_slot, rel_slot))
+		int32 rel_call = 0;
+		ea_t call_to = call_is_indirect ? libc_ptr_slot : libc_call_target;
+		if (!CalcRel32(cave + (call_disp_pos + 4), call_to, rel_call))
 		{
-			out_msg = "_start mitigation libc_start_main pointer out of range.";
+			out_msg = "_start mitigation libc_start_main call target out of range.";
 			return false;
 		}
-		stub[call_slot_disp_pos + 0] = static_cast<uint8>(rel_slot & 0xFF);
-		stub[call_slot_disp_pos + 1] = static_cast<uint8>((rel_slot >> 8) & 0xFF);
-		stub[call_slot_disp_pos + 2] = static_cast<uint8>((rel_slot >> 16) & 0xFF);
-		stub[call_slot_disp_pos + 3] = static_cast<uint8>((rel_slot >> 24) & 0xFF);
+		stub[call_disp_pos + 0] = static_cast<uint8>(rel_call & 0xFF);
+		stub[call_disp_pos + 1] = static_cast<uint8>((rel_call >> 8) & 0xFF);
+		stub[call_disp_pos + 2] = static_cast<uint8>((rel_call >> 16) & 0xFF);
+		stub[call_disp_pos + 3] = static_cast<uint8>((rel_call >> 24) & 0xFF);
 
 		int32 rel_ret = 0;
 		if (!CalcRel32(cave + (jmp_back_disp_pos + 4), ret_ea, rel_ret))
@@ -222,7 +314,7 @@ public:
 			return false;
 		}
 
-		if (!PatchJmp(call_ea, cave, 6, out_msg))
+		if (!PatchJmp(call_ea, cave, call_insn_size, out_msg))
 		{
 			return false;
 		}
@@ -262,8 +354,6 @@ public:
 			return PatchCallClampSizeArg(entry, out_msg);
 		case PatchAction::FRAME_FMT_SAFE_CALL:
 			return PatchFormatCallViaFrame(entry, out_msg);
-		case PatchAction::FRAME_CLEAR_ARG0_CALL:
-			return PatchDanglingCallViaFrame(entry, out_msg);
 		case PatchAction::FRAME_FREE_AND_CLEAR_SLOT:
 			return PatchFreeAndClearSlotViaFrame(entry, out_msg);
 		default:
@@ -1046,82 +1136,6 @@ private:
 		}
 
 		out_msg.cat_sprnt("Patched format call via patch-segment safe %%s trampoline at %a.", cave);
-		return true;
-	}
-
-	static bool PatchDanglingCallViaFrame(const VulnEntry& entry, qstring& out_msg)
-	{
-		if (!Is64Bit())
-		{
-			out_msg = "FRAME_CLEAR_ARG0_CALL currently supports only x64 binaries.";
-			return false;
-		}
-
-		insn_t call_insn;
-		ea_t call_target = BADADDR;
-		if (!DecodeCallInsn(entry.address, call_insn, call_target, out_msg))
-		{
-			return false;
-		}
-
-		ea_t ret_ea = entry.address + call_insn.size;
-		segment_t* frame_seg = nullptr;
-		if (!EnsureFrameExec(frame_seg, out_msg))
-		{
-			return false;
-		}
-
-		std::vector<uint8> stub = {
-			0x31, 0xFF,
-			0xE8, 0x00, 0x00, 0x00, 0x00,
-			0xE9, 0x00, 0x00, 0x00, 0x00
-		};
-
-		ea_t cave = FindCodeCave(frame_seg, stub.size());
-		if (cave == BADADDR)
-		{
-			out_msg = "No executable code cave found in patch segment (.eh_frame_hdr/.eh_frame).";
-			return false;
-		}
-
-		int32 rel_call = 0;
-		if (!CalcRel32(cave + 7, call_target, rel_call))
-		{
-			out_msg = "Trampoline call target out of range.";
-			return false;
-		}
-		stub[3] = static_cast<uint8>(rel_call & 0xFF);
-		stub[4] = static_cast<uint8>((rel_call >> 8) & 0xFF);
-		stub[5] = static_cast<uint8>((rel_call >> 16) & 0xFF);
-		stub[6] = static_cast<uint8>((rel_call >> 24) & 0xFF);
-
-		int32 rel_jmp = 0;
-		if (!CalcRel32(cave + 12, ret_ea, rel_jmp))
-		{
-			out_msg = "Trampoline return jump out of range.";
-			return false;
-		}
-		stub[8] = static_cast<uint8>(rel_jmp & 0xFF);
-		stub[9] = static_cast<uint8>((rel_jmp >> 8) & 0xFF);
-		stub[10] = static_cast<uint8>((rel_jmp >> 16) & 0xFF);
-		stub[11] = static_cast<uint8>((rel_jmp >> 24) & 0xFF);
-
-		if (!EmitBytes(cave, stub, out_msg))
-		{
-			return false;
-		}
-
-		if (!PatchJmp(entry.address, cave, call_insn.size, out_msg))
-		{
-			return false;
-		}
-
-		if (!entry.patch_suggestion.empty())
-		{
-			set_cmt(entry.address, entry.patch_suggestion.c_str(), true);
-		}
-
-		out_msg.cat_sprnt("Patched dangling-pointer call via patch-segment arg0-clear trampoline at %a.", cave);
 		return true;
 	}
 

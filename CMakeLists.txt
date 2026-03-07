@@ -100,6 +100,10 @@ set_target_properties(pwn_helper PROPERTIES
   OUTPUT_NAME "pwn_helper"
 )
 
+if(APPLE)
+  set_target_properties(pwn_helper PROPERTIES SUFFIX ".dylib")
+endif()
+
 if(DEFINED ENV{IDA_PLUGIN_DIR} AND NOT "$ENV{IDA_PLUGIN_DIR}" STREQUAL "")
   install(TARGETS pwn_helper DESTINATION "$ENV{IDA_PLUGIN_DIR}")
 endif()
