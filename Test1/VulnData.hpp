@@ -25,14 +25,14 @@ enum class PatchAction
 
 struct VulnEntry
 {
-	ea_t address;			// ��ַ
-	qstring type;			// ����
-	qstring description;	// ����
-	RiskLevel risk;   // ����
+	ea_t address;			// 漏洞位置地址
+	qstring type;			// 漏洞类型
+	qstring description;	// 漏洞描述
+	RiskLevel risk;			// 风险等级
 	qstring patch_suggestion;
 	PatchAction patch_action;
 	uint64 patch_value;
-	int patch_aux;
+	int patch_aux;          // Patch 动作的附加参数（如目标参数下标）
 
 	VulnEntry() : address(0), risk(RiskLevel::INFO), patch_action(PatchAction::NONE), patch_value(0), patch_aux(0)
 	{}

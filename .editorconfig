@@ -1,0 +1,19 @@
+root = true
+
+[*.{h,hpp,c,cc,cpp,cxx}]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{md,txt}]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.sln]
+charset = utf-8-bom
+
+[*.vcxproj]
+charset = utf-8

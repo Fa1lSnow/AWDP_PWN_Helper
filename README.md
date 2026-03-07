@@ -62,8 +62,14 @@
 ### 环境要求
 - IDA Pro 9.2 SDK
 - Visual Studio 2022（Windows）
+- MSVC 编译选项建议启用 `/utf-8`（项目已在 `Test1.vcxproj` 中配置）
 
 ### 说明
 - 工程位于 `Test1/`，入口文件为 `Test1/main.cpp`。
 - 插件依赖 Hex-Rays 反编译器，初始化阶段会检查 `init_hexrays_plugin()`。
+
+## 编码约定
+
+- 源码与注释统一使用 **UTF-8** 编码。
+- 仓库通过 `.editorconfig` 与 `.gitattributes` 约束常见源码文件编码，避免中文注释出现乱码。
 

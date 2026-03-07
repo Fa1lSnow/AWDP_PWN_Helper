@@ -12,7 +12,8 @@
 #include "PatchEngine.hpp"
 
 /**
- * ����UI������
+ * 漏洞结果 UI 选择器
+ * 负责展示扫描结果，并在用户确认后执行单条自动修补
  */
 class VulnChooser : public chooser_t
 {
@@ -20,7 +21,7 @@ public:
 	static constexpr int kColumnWidthsEx[4] = {15, 20, 52, 46};
 	static constexpr const char* kColumnHeadersEx[4] = {"Address", "Type", "Description", "Patch Suggestion"};
 
-	// ©�������б�
+	// 扫描结果列表
 	VulnList entries;
 
 public:
@@ -91,15 +92,15 @@ public:
 		}
 		const VulnEntry& entry = entries[n];
 
-		// ��ַ��
+		// 地址列
 		qstring addr_str;
 		addr_str.sprnt("%a", entry.address);
 		cols->at(0) = addr_str;
 
-		// ������
+		// 类型列
 		cols->at(1) = entry.type;
 
-		//������
+		// 描述列
 		cols->at(2) = entry.description;
 
 
@@ -112,7 +113,7 @@ public:
 			cols->at(3) = entry.patch_suggestion;
 		}
 
-		// ���ݷ��յȼ�����ͼ��
+		// 根据风险等级设置图标
 		if ( icon_)
 		{
 			if (entry.risk == RiskLevel::HIGH || entry.risk == RiskLevel::CRITICAL)
@@ -131,7 +132,7 @@ public:
 
 	}
 
-	// ˫����ת
+	// 双击后跳转到对应地址
 	virtual cbret_t idaapi enter(size_t n) override
 	{
 		if (n < entries.size())
@@ -154,12 +155,12 @@ class test_plugin_t : public plugmod_t
 public:
 	virtual bool idaapi run(size_t arg) override
 	{
-		// ʵ��������
+		// 初始化扫描引擎
 		ScannerEngine engine;
 
 		VulnChooser* chooser = new VulnChooser("Vuln Results");
 
-		// ִ��ɨ��
+		// 执行扫描并填充结果
 		engine.ScanAll(chooser->entries);
 
 		ea_t start_ea = get_name_ea(BADADDR, "_start");
@@ -206,7 +207,7 @@ plugmod_t* idaapi init()
 	return new test_plugin_t;
 }
 
-// �����Ϣ
+// IDA 插件描述信息
 plugin_t PLUGIN =
 {
 	IDP_INTERFACE_VERSION,

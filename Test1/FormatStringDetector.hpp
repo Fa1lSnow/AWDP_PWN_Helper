@@ -16,7 +16,7 @@
 class FormatStringDetector : public IVulnDetector, public ctree_visitor_t
 {
 private:
-	// ���溯������Ӧ�ĸ�ʽ���ַ����Ĳ�������
+	// 记录格式化函数及其格式串参数下标
 	using FormatFuncMap = std::unordered_map<std::string, int>;
 	FormatFuncMap m_func_map;
 
@@ -64,7 +64,7 @@ public:
 
 protected:
 
-	// ����ע��
+	// 注册函数名映射
 	void RegisterFunc(const std::string& name, int fmt_idx)
 	{
 		m_func_map[name] = fmt_idx;
@@ -75,7 +75,7 @@ protected:
 		}
 	}
 
-	// ���� cast ����ת��
+	// 跳过 cast 节点，获取真实表达式
 	cexpr_t* SkipCasts(cexpr_t* expr)
 	{
 		cexpr_t* cur = expr;
@@ -93,7 +93,7 @@ protected:
 			return 0;
 		}
 
-		// ��ȡ������
+		// 获取被调用函数名
 		qstring func_name_q;
 		if (expr->x->op == cot_obj)
 		{
@@ -138,16 +138,16 @@ private:
 			return;
 		}
 
-		// �����������
+		// 参数数量不足，无法访问格式串参数
 		if (call->a->size() <= fmt_idx)
 		{
 			return;
 		}
 
-		// ��ȡ��ʽ�ַ�������
+		// 取出格式串参数
 		cexpr_t* fmt_arg = &(*call->a)[fmt_idx];
 
-		// ���� cast
+		// 去除中间 cast
 		cexpr_t* real_fmt = SkipCasts(fmt_arg);
 		if (real_fmt == nullptr)
 		{
@@ -159,13 +159,13 @@ private:
 			RiskLevel risk = RiskLevel::HIGH;
 			qstring info;
 
-			//�ֲ�����
+			// 局部变量作为格式串，风险最高
 			if (real_fmt->op == cot_var)
 			{
 				info.cat_sprnt("Risk: Local Var (Stack) used in '%s'", func_name.c_str());
 				risk = RiskLevel::CRITICAL;
 			}
-			// ȫ�ֱ������ڴ����
+			// 全局变量：若位于可写段，视为高危
 			else if (real_fmt->op == cot_obj)
 			{
 				segment_t* seg = getseg(real_fmt->obj_ea);
@@ -182,13 +182,13 @@ private:
 				info.cat_sprnt("Risk: Global Var '%s' used in '%s'", gname.c_str(), func_name.c_str());
 				risk = RiskLevel::CRITICAL;
 			}
-			// ���á�ָ��
+			// 引用/指针来源不可控
 			else if (real_fmt->op == cot_ref)
 			{
 				info.cat_sprnt("Risk: Pointer/Reference used in '%s'", func_name.c_str());
 				risk = RiskLevel::CRITICAL;
 			}
-			// ��������ֵ
+			// 由函数返回值提供格式串
 			else if (real_fmt->op == cot_call)
 			{
 				info.cat_sprnt("Risk: Function Return Value used in '%s'", func_name.c_str());

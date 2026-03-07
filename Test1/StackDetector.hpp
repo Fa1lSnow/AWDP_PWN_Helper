@@ -28,7 +28,7 @@ private:
 public:
     StackDetector() : ctree_visitor_t(CV_FAST)
     {
-        // ע��ص�
+        // 注册并分发各类危险调用检测器
         auto check_gets = [this](cexpr_t* e) { CheckGets(e); };
         m_dispatch_map["gets"] = check_gets;
         m_dispatch_map["_gets"] = check_gets;
@@ -86,7 +86,7 @@ public:
     }
 
 protected:
-    // ���� cast ����ת�����ҵ����Ľڵ�
+    // 剥离 cast 
     cexpr_t* SkipCasts(cexpr_t* expr)
     {
         cexpr_t* cur = expr;
@@ -151,7 +151,7 @@ protected:
 private:
     uint64_t GetStackBufferSize(cexpr_t* arg_expr)
     {
-        // ���� Cast 
+        // 剥离 cats
         cexpr_t* real_expr = SkipCasts(arg_expr);
         if (real_expr == nullptr)
         {
@@ -335,7 +335,7 @@ private:
 
         if (dest_size > 0)
         {
-			// src Ϊ�ַ�������
+			// 源为字符串字面量，可直接比较长度
             if (real_src->op == cot_str)
 	        {
 		        qstring content;
@@ -364,7 +364,7 @@ private:
 	        			PatchAction::NOP_CALL);
 	        	}
 	        }
-            // src Ϊ�������ӱ���ʽ���޷�ȷ����С
+            // 源为变量或复杂表达式，长度不确定
             else
             {
                 LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
@@ -397,7 +397,7 @@ private:
 
         if (dest_size > 0)
         {
-			// len Ϊ������
+			// 长度为常量，可做精确边界判断
             if (real_len->op == cot_num)
 	        {
                 if (dest_size < UINT64_MAX && real_len->n->_value == dest_size + 1)
@@ -432,7 +432,7 @@ private:
 		        		2);
 		        }
 	        }
-			// len Ϊ�������ӱ���ʽ���޷�ȷ����С
+			// 长度为变量或表达式，按高风险处理
             else
             {
                 LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");
@@ -468,7 +468,7 @@ private:
 
         if (dest_size > 0 )
         {
-            // len Ϊ������
+            // 长度为常量，可直接判断是否越界
             if (real_len->op == cot_num)
 	        {
 	        	if (dest_size < UINT64_MAX && real_len->n->_value == dest_size + 1)
@@ -503,7 +503,7 @@ private:
 	        			2);
 		        }
 	        }
-            // len Ϊ�������ӱ���ʽ���޷�ȷ����С
+            // 长度为变量或表达式，无法静态确定上界
             else
             {
                 LOG_DEBUG("  [CheckRead] !!! POSSIBLE OVERFLOW DETECTED !!!\n");

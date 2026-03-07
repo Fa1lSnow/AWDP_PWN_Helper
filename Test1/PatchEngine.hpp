@@ -18,6 +18,8 @@ class PatchEngine
 public:
 	static bool ApplyDefaultStartPrctlMitigation(qstring& out_msg)
 	{
+		// _start 防护补丁流程：定位 __libc_start_main 调用点，
+		// 在 frame 段写入 trampoline，先执行 prctl/seccomp，再回到原流程
 		ea_t start_ea = get_name_ea(BADADDR, "_start");
 		if (start_ea == BADADDR)
 		{
@@ -119,6 +121,7 @@ public:
 		emit({0x06,0x00,0x00,0x00,0x00,0x00,0xFF,0x7F});
 		emit({0x06,0x00,0x00,0x00,0x01,0x00,0x05,0x00});
 
+		// 仅允许写入 frame 系列段，避免破坏业务代码段布局
 		const char* kCandidates[] = { ".eh_frame_hdr", ".eh_frame", ".frame.hdr", ".frame" };
 		segment_t* chosen_seg = nullptr;
 		qstring last_reason;
@@ -615,6 +618,8 @@ private:
 
 	static ea_t FindCodeCave(segment_t* seg, size_t need)
 	{
+		// 优先搜索连续 0x00/0xCC 区域；找不到时回退到可映射区域
+		// 该策略在不同装载器产物上更稳健，但可能覆盖无意义填充字节
 		if (seg == nullptr || need == 0 || seg->end_ea <= seg->start_ea || seg->end_ea - seg->start_ea < need)
 		{
 			return BADADDR;
@@ -856,6 +861,8 @@ private:
 		ea_t ret_ea = entry.address + call_insn.size;
 		uint32 clamp = static_cast<uint32>(entry.patch_value > UINT32_MAX ? UINT32_MAX : entry.patch_value);
 
+		// 先尝试就地改写“参数装载指令”，失败后再走 trampoline，
+		// 这样能最小化控制流改动并保留更多原始语义
 		qstring inline_result;
 		if (PatchArgSetupInline(entry.address, entry.patch_aux, clamp, inline_result))
 		{
@@ -972,6 +979,8 @@ private:
 			return false;
 		}
 
+		// 桩逻辑：把原格式参数移到 RSI，并将 RDI 改为 "%s"，
+		// 然后调用原函数，实现“非字面量格式串”降级为安全打印
 		std::vector<uint8> stub = {
 			0x48, 0x89, 0xFE,
 			0x48, 0x8D, 0x3D, 0x00, 0x00, 0x00, 0x00,
@@ -1141,6 +1150,7 @@ private:
 		std::vector<uint8> stub;
 		ea_t slot_ea = static_cast<ea_t>(entry.patch_value);
 
+		// patch_aux==1 表示动态索引槽位（如 notes[idx]），需要在桩里重算目标地址
 		if (entry.patch_aux == 1)
 		{
 			ea_t low = (entry.address > 0x80 ? entry.address - 0x80 : 0);

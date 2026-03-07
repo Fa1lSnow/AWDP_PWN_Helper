@@ -29,11 +29,11 @@ public:
 
 	virtual void RunAnalysis(cfunc_t* cfunc, VulnList& result) override
 	{
-		// ��ȡ��������
+		// 获取当前函数名
 		qstring func_name;
 		get_func_name(&func_name, cfunc->entry_ea);
 
-		// ��ʾ����������������� "main"���򱨸�һ�������©��
+		// 演示规则：函数名包含 main 时给出一条低风险示例项
 		if (func_name.find("main") != qstring::npos)
 		{
 			result.push_back(VulnEntry(
@@ -46,11 +46,11 @@ public:
 	}
 };
 
-// ɨ��������
+// 扫描引擎：统一遍历函数并分发给各检测器
 class ScannerEngine
 {
 private:
-	// ̽�����б�
+	// 已注册检测器列表
 	std::vector<std::unique_ptr<IVulnDetector>> detectors;
 
 public:
@@ -65,7 +65,7 @@ public:
 	~ScannerEngine() = default;
 
 	/**
-	 * ע��һ���µ�©ɨ
+	 * 注册一个新的漏洞检测器
 	 */
 	void RegisterDetector(std::unique_ptr<IVulnDetector> detector)
 	{
@@ -77,7 +77,7 @@ public:
 
 	void ScanAll(VulnList& out_result)
 	{
-		// ��鲢��ʼ�� Hex-Rays ���
+		// 检查并初始化 Hex-Rays 反编译器
 		if (!init_hexrays_plugin())
 		{
 			msg("Hex-Rays decompiler is not available.\n");
@@ -91,11 +91,11 @@ public:
 
 		show_wait_box("Starting scan...");
 
-		// ��ʱ�����ڿ���ˢ�¼��
+		// 控制 UI 刷新节奏，避免输出过于频繁
 		auto last_update_time = std::chrono::steady_clock::now();
 
 
-		// �������к���
+		// 遍历数据库中的全部函数
 		for (size_t i = 0; i < func_count; i ++)
 		{
 
@@ -105,14 +105,14 @@ public:
 				break;
 			}
 
-			// ��ȡ�������
+			// 获取函数对象
 			func_t* pFunc = getn_func(i);
 			if (!pFunc)
 			{
 				continue;
 			}
 
-			// ����plt��
+			// 跳过 .plt 相关段
 			segment_t* seg = getseg(pFunc->start_ea);
 			if (seg == nullptr)
 			{
@@ -126,13 +126,13 @@ public:
 				continue;
 			}
 
-			// ���� PLT���⺯����Thunk ���������غ���
+			// 跳过导入/Thunk/隐藏函数
 			if (pFunc->flags & (FUNC_LIB | FUNC_THUNK | FUNC_HIDDEN))
 			{
 				continue;
 			}
 
-			// ���� extern �� data ��
+			// 跳过 extern 与纯数据段
 			if (seg)
 			{
 				if (seg->type == SEG_XTRN || seg->type == SEG_DATA)
@@ -146,7 +146,7 @@ public:
 				continue;
 			}
 
-			// 100 ms ˢ��һ��UI
+			// 每 100ms 输出一次进度
 			auto current_time = std::chrono::steady_clock::now();
 			auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_time).count();
 

@@ -27,9 +27,13 @@ private:
 
 	VulnList* m_results;
 	cfunc_t* m_cfunc;
+	// 释放状态跟踪：按局部变量、全局对象、表达式键三种粒度并行记录
+	// 这样可以覆盖 var/obj/idx/ref 等不同 AST 形态，降低漏报
 	std::unordered_set<int> m_freed_vars;
 	std::unordered_set<ea_t> m_freed_objs;
 	std::unordered_set<std::string> m_freed_targets;
+	// 延迟上报：函数扫描完后再输出“未清空悬垂指针”结果，
+	// 避免中间路径被后续赋值修正时提前误报
 	std::unordered_map<std::string, PendingDanglingInfo> m_pending_dangling;
 
 public:
@@ -227,6 +231,7 @@ private:
 
 	std::string BuildExprKey(cexpr_t* expr, int depth = 0) const
 	{
+		// 递归深度限制用于防止异常 AST 触发指数级展开
 		if (expr == nullptr || depth > 24)
 		{
 			return std::string();
@@ -307,6 +312,8 @@ private:
 
 	void ClearFreedTargetsByAlias(const std::string& base_key)
 	{
+		// 使用双向子串匹配做“别名近似消解”
+		// 这是启发式策略：更偏向减少漏报，可能引入少量保守清理
 		if (base_key.empty())
 		{
 			return;
@@ -457,6 +464,7 @@ private:
 			return;
 		}
 
+		// 扫描结束后统一输出：此时更能确认“free 后仍全局可达且未置空”
 		for (const auto& kv : m_pending_dangling)
 		{
 			const std::string& key = kv.first;
@@ -523,6 +531,8 @@ private:
 
 	void ClearFreedState(cexpr_t* lhs)
 	{
+		// 一旦发生写入，相关“已释放”状态应失效，
+		// 否则会把重新赋值后的指针误判为悬垂使用
 		int var_idx = -1;
 		ea_t obj_ea = BADADDR;
 		bool has_var_or_obj = ExtractVarOrObj(lhs, var_idx, obj_ea);
@@ -603,6 +613,7 @@ private:
 
 	void GatherFreedRefs(cexpr_t* expr, bool& found, int depth = 0) const
 	{
+		// 大深度保护，避免在恶意或退化 AST 上递归失控
 		if (expr == nullptr || found || depth > 128)
 		{
 			return;
@@ -754,6 +765,7 @@ private:
 
 	bool IsOverflowProneSizeExpr(cexpr_t* expr, int depth = 0) const
 	{
+		// 仅将“非常量算术”视为可疑；纯常量表达式默认认为编译期已固定
 		if (depth > 128)
 		{
 			return false;
