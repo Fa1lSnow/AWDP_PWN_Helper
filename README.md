@@ -68,6 +68,52 @@
 - 工程位于 `Test1/`，入口文件为 `Test1/main.cpp`。
 - 插件依赖 Hex-Rays 反编译器，初始化阶段会检查 `init_hexrays_plugin()`。
 
+### 使用 CMake 跨平台构建
+
+> 产物按平台生成：Windows `.dll`、Linux `.so`、macOS `.dylib`。
+
+项目根目录已提供：
+- `CMakeLists.txt`
+- `CMakePresets.json`
+
+1) 指定 SDK 根目录（包含 `src/include` 与 `src/lib`）
+
+```bash
+cmake -S . -B build -DIDA_SDK_ROOT=/mnt/e/CppTools/ida-sdk-main
+```
+
+2) 编译
+
+```bash
+cmake --build build -j
+```
+
+也可以直接使用预设（默认 SDK 路径为 `/mnt/e/CppTools/ida-sdk-main`）：
+
+```bash
+cmake --preset default
+cmake --build --preset default
+```
+
+Windows 多配置生成器（VS）可使用：
+
+```powershell
+cmake -S . -B build -DIDA_SDK_ROOT=E:/CppTools/ida-sdk-main
+cmake --build build --config Release
+```
+
+可选：设置 `IDA_PLUGIN_DIR` 后执行安装
+
+```bash
+cmake --install build
+```
+
+### 产物说明
+
+- Linux: `build/pwn_helper.so`
+- Windows: `build/Release/pwn_helper.dll`（多配置生成器）
+- macOS: `build/pwn_helper.dylib`
+
 ## 编码约定
 
 - 源码与注释统一使用 **UTF-8** 编码。
