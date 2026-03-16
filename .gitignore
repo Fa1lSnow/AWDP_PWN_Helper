@@ -363,3 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 /build
 /build-cmake-test
+/build_win
+/build_linux
+/build_test

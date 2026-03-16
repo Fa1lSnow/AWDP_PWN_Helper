@@ -68,45 +68,41 @@
 - 工程位于 `Test1/`，入口文件为 `Test1/main.cpp`。
 - 插件依赖 Hex-Rays 反编译器，初始化阶段会检查 `init_hexrays_plugin()`。
 
-### 使用 CMake 跨平台构建
-
-> 产物按平台生成：Windows `.dll`、Linux `.so`、macOS `.dylib`。
+### 使用 CMake（Windows 默认）
 
 项目根目录已提供：
 - `CMakeLists.txt`
 - `CMakePresets.json`
 
-1) 指定 SDK 根目录（包含 `src/include` 与 `src/lib`）
+1) 使用默认预设（推荐）
 
 ```bash
-cmake -S . -B build -DIDA_SDK_ROOT=/mnt/e/CppTools/ida-sdk-main
+cmake --preset default
 ```
 
 2) 编译
 
 ```bash
-cmake --build build -j
-```
-
-也可以直接使用预设（默认 SDK 路径为 `/mnt/e/CppTools/ida-sdk-main`）：
-
-```bash
-cmake --preset default
 cmake --build --preset default
 ```
 
-Windows 多配置生成器（VS）可使用：
+若需要手动指定生成器，可使用：
 
 ```bash
-cmake -S . -B build -DIDA_SDK_ROOT=E:/CppTools/ida-sdk-main
-cmake --build build --config Release
+cmake -S . -B build_win -G "Visual Studio 17 2022" -A x64 -DIDA_SDK_ROOT=E:/CppTools/ida-sdk-main
+cmake --build build_win --config Release
+```
+
+若历史 `build/` 目录里残留了旧生成器缓存（例如 `Visual Studio 18 2026`），请先清理后再配置：
+
+```bash
+Remove-Item .\build\CMakeCache.txt -Force
+Remove-Item .\build\CMakeFiles -Recurse -Force
 ```
 
 ### 产物说明
 
-- Linux: `build/pwn_helper.so`
-- Windows: `build/Release/pwn_helper.dll`（多配置生成器）
-- macOS: `build/pwn_helper.dylib`
+- Windows: `build_win/Release/pwn_helper.dll`（多配置生成器）
 
 ## 编码约定
 
