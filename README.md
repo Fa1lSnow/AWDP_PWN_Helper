@@ -35,7 +35,8 @@
 ### 4) 危险 API 与命令注入
 - 非字面量命令参数调用（`system` / `popen` / `exec*`）。
 - 常见高风险 API 使用点审计（如 `strcat/sprintf/scanf`）。
-
+## 使用方法
+IDA 插件列表中点击 vulnScanner 或者 使用快捷键 ALT + F8。
 ## Patch 机制
 
 - 结果面板包含 `Patch Suggestion` 列。
