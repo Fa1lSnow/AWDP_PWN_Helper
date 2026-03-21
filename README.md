@@ -56,7 +56,7 @@ IDA 插件列表中点击 vulnScanner 或者 使用快捷键 ALT + F8。
 
 - 扫描结果会默认附加一条 `Generic Defense` 项，地址指向 `_start`（找不到则尝试 `start`）。
 - 该项不会自动执行；需要人工在结果列表中右键触发 patch。
-- 当前规则重点限制 `execve` 与 `open`，并保留启动路径可继续执行。
+- 当前规则限制 `open/openat/execve/execveat/openat2`（syscall `2/257/59/322/437`），并保留启动路径可继续执行。
 
 ## 构建
 
@@ -109,4 +109,3 @@ Remove-Item .\build\CMakeFiles -Recurse -Force
 
 - 源码与注释统一使用 **UTF-8** 编码。
 - 仓库通过 `.editorconfig` 与 `.gitattributes` 约束常见源码文件编码，避免中文注释出现乱码。
-
